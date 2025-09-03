@@ -5,10 +5,10 @@ import re
 import time
 
 # Configurações
-HOST = "host"
-USER = "user"
-PASSWORD = "senha"
-ENABLE_PASSWORD = "senha"
+HOST = "172.21.1.226"
+USER = "GEPON"
+PASSWORD = "A89YQasdfhq14s99"
+ENABLE_PASSWORD = "A89YQasdfhq14s99"
 TIMEOUT = 60
 
 # Argumento: aplicar ou somente exibir
@@ -27,7 +27,7 @@ CMD_TR069 = (
     "acs_url http://acs.ixc.tubaron.net/tr069 acl_user admin acl_pswd 7W9wqMdIeIPnxIsWZeeA "
     "inform enable interval 200 port 7545 user IXCSoft pswd 7W9wqMdIeIPnxIsWZeeA"
 )
-COMPATIBLE_ONUS = ["HG6145E", "5506-04-FA", "5506-02-B"]
+COMPATIBLE_ONUS = ["HG6145E", "5506-04-FA"]
 
 # --------------------------------------------------------------------
 def conectar(host, user, password, enable_password):
@@ -97,29 +97,31 @@ def listar_onus(session):
     # Filtrar ONUs compatíveis
     onus_compat = []
     for line in output.splitlines():
-        match = re.match(r"^\s*(\d+)\s+(\d+)\s+(\d+)\s+([\w\-]+)", line)
+        match = re.search(r"\s*(\d+)\s+(\d+)\s+(\d+)\s+([^\s]+)", line)
         if match:
             slot, pon, onu, onutype = match.groups()
             if onutype in COMPATIBLE_ONUS:
                 onus_compat.append((slot, pon, onu, onutype))
-                print(f"✅ Compatível: ONU {onu} Tipo {onutype}")
+                print(f"✅ Compatível: Slot {slot}, PON {pon}, ONU {onu}, Tipo {onutype}")
 
     print(f"\n📊 Total ONUs compatíveis: {len(onus_compat)}")
     return onus_compat
 
 # --------------------------------------------------------------------
 def mostrar_tr069_e_wan(session, onus):
-    print("\n🔍 Exibindo TR-069 e WAN CFG (modo teste)...\n")
+    print(onus)
+    # print("\n🔍 Exibindo TR-069 e WAN CFG (modo teste)...\n")
     for slot, pon, onu, onutype in onus:
-        print(f"\n=== ONU {onu} ({onutype}) ===")
-        print(f"[Simulação] Executando: {CMD_WAN_CFG} para Slot {slot}, PON {pon}")
-        print("[TR069] http://acs.exemplo.com:7547")
-        print("[WAN CFG] PPPoE usuário: cliente123 senha: ****")
-        time.sleep(0.5)
+        print(CMD_TR069.format(slot=slot, pon=pon, onu=onu))
+    #     print(f"\n=== ONU {onu} ({onutype}) ===")
+    #     print(f"[Simulação] Executando: {CMD_WAN_CFG} para Slot {slot}, PON {pon}")
+    #     print("[TR069] http://acs.exemplo.com:7547")
+    #     print("[WAN CFG] PPPoE usuário: cliente123 senha: ****")
+    #     time.sleep(0.5)
 
 # --------------------------------------------------------------------
 if __name__ == "__main__":
     session = conectar(HOST, USER, PASSWORD, ENABLE_PASSWORD)
     onus_compat = listar_onus(session)
-    mostrar_tr069_e_wan(session, onus_compat)
+    # mostrar_tr069_e_wan(session, onus_compat)
     print("\n✅ Script finalizado!")
