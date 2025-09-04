@@ -2,6 +2,8 @@
 import pexpect
 import sys
 import re
+import requests
+import base64
 import time
 from dotenv import load_dotenv
 import os
@@ -35,9 +37,12 @@ CMD_TR069 = (
 )
 COMPATIBLE_ONUS = ["HG6145E", "5506-04-FA"]
 
+# IXCSoft API
+IXC_URL = os.getenv("IXC_API_URL")
+IXC_TOKEN = os.getenv("IXC_TOKEN")
+
 # --------------------------------------------------------------------
 def conectar(host, user, password, enable_password):
-    print(f"Tentando conectar a {host}...")
     try:
         session = pexpect.spawn(f"telnet {host}", encoding="utf-8", timeout=TIMEOUT)
 
@@ -113,21 +118,15 @@ def listar_onus(session):
     print(f"\n📊 Total ONUs compatíveis: {len(onus_compat)}")
     return onus_compat
 
-import re
-
-import re
-
 def listar_wan_cfg(session, onus_compat, timeout=60):
-    """
-    Lista a configuração WAN apenas das ONUs compatíveis.
-    onus_compat: lista de tuplas (slot, pon, onu, onutype)
-    """
     send_command(session, "cd ..", force=True)
     send_command(session, CMD_LIST_CONFIG_WAN, force=True)
     
     output = ""
+    
     while True:
         try:
+            # lê até 4096 bytes do buffer
             chunk = session.read_nonblocking(size=4096, timeout=1)
         except Exception:
             chunk = b""
@@ -135,36 +134,107 @@ def listar_wan_cfg(session, onus_compat, timeout=60):
         if not chunk:
             continue
         
+        # Converte bytes para string
         if isinstance(chunk, bytes):
             chunk = chunk.decode(errors="ignore")
         
         output += chunk.replace("\x00", "")
         
-        # paginação
+        # Detecta paginação e envia espaço
         if "--Press any key to continue" in chunk:
-            session.send(" ")  # envia espaço para continuar
+            session.send(" ")  # envia espaço para avançar página
         
-        # prompt final
+        # Detecta prompt final da OLT
         if re.search(r"#\s*$", chunk):
             break
 
+    
     # Limpa linhas vazias e espaços extras
-    output = "\n".join([line.strip() for line in output.splitlines() if line.strip()])
-    
-    # Extrai só as linhas compatíveis
-    filtered_lines = []
-    for line in output.splitlines():
-        match = re.search(r"set wancfg sl (\d+) (\d+) (\d+) ", line)
-        if match:
-            slot, pon, onu = match.groups()
-            if (slot, pon, onu, None) in [(s, p, o, None) for s, p, o, t in onus_compat]:
-                filtered_lines.append(line)
-    
-    print("\n📋 Config WAN das ONUs compatíveis:\n")
-    for l in filtered_lines:
-        print(l)
-    
-    return filtered_lines
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+
+    # Monta chaves de filtro para cada ONU compatível
+    wanted_keys = {
+        f"set wancfg sl {slot} {pon} {onu}" for (slot, pon, onu, _onutype) in onus_compat
+    }
+
+    # Mantém apenas linhas referentes às ONUs compatíveis
+    filtered_lines = [line for line in lines if any(key in line for key in wanted_keys)]
+
+    # Atualiza as linhas de PPPoE substituindo a chave por senha da API
+    updated_lines = _atualizar_wan_com_senha(filtered_lines)
+    updated_output = "\n".join(updated_lines)
+    return updated_output
+
+
+def _extrair_login_e_chave(linha):
+    """
+    Extrai login PPPoE (email) e chave atual (após 'key:') de uma linha wancfg.
+    Retorna (login, chave) ou (None, None) se não encontrar.
+    """
+    # Exemplo alvo:
+    # set wancfg sl 4 3 5 ... pppoe ... joslainenoronha@tubaron.net key:f6&ii7*e null ...
+    match = re.search(r"pppoe\s+pro\s+(?:en|dis)\s+([^\s]+)\s+key:([^\s]+)", linha)
+    if not match:
+        return None, None
+    return match.group(1), match.group(2)
+
+
+def _buscar_senha_ixc(login):
+    """
+    Consulta a API IXCSoft para obter a senha do login informado.
+    Retorna a senha (string) ou None em caso de falha.
+
+    """
+    if not IXC_URL or not IXC_TOKEN:
+        return None
+
+    payload = {
+        "qtype": "radusuarios.login",
+        "query": login,
+        "oper": "=",
+        "page": "1",
+        "rp": "20",
+        "sortname": "radusuarios.id",
+        "sortorder": "asc",
+    }
+
+    try:
+        basic_token = base64.b64encode(IXC_TOKEN.encode("utf-8")).decode("utf-8")
+        headers = {
+            "ixcsoft": "listar",
+            "Authorization": f"Basic {basic_token}",
+            "Content-Type": "application/json",
+        }
+        # Mantém a assinatura próxima ao exemplo fornecido
+        resp = requests.post(IXC_URL, headers=headers, json=payload, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+        registros = data.get("registros") or []
+        if not registros:
+            return None
+        senha = registros[0].get("senha")
+        return senha
+    except Exception:
+        return None
+
+
+def _atualizar_wan_com_senha(linhas):
+    """
+    Para cada linha wancfg PPPoE com 'key:<valor>', consulta a API e substitui por '<senha>'.
+    Linhas sem PPPoE/key permanecem inalteradas.
+    """
+    resultado = []
+    for linha in linhas:
+        if "pppoe" in linha and "key:" in linha:
+            login, chave = _extrair_login_e_chave(linha)
+            if login:
+                senha = _buscar_senha_ixc(login)
+                if senha:
+                    # Substitui 'key:<chave>' por 'senha' (sem o prefixo 'key:') conforme exemplo
+                    linha = re.sub(r"\bkey:[^\s]+", senha, linha)
+        resultado.append(linha)
+    return resultado
+
 
 # --------------------------------------------------------------------
 def mostrar_tr069_e_wan(session, onus):
@@ -185,6 +255,10 @@ def mostrar_tr069_e_wan(session, onus):
 if __name__ == "__main__":
     session = conectar(HOST, USER, PASSWORD, ENABLE_PASSWORD)
     onus_compat = listar_onus(session)
-    # mostrar_tr069_e_wan(session, onus_compat)
-    listar_wan_cfg(session)
+    mostrar_tr069_e_wan(session, onus_compat)
+    wans = listar_wan_cfg(session, onus_compat)
+    print(wans)
     print("\n✅ Script finalizado!")
+
+
+
