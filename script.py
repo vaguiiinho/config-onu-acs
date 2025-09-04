@@ -5,10 +5,10 @@ import re
 import time
 
 # Configurações
-HOST = "172.21.1.226"
+HOST = "host"
 USER = "GEPON"
-PASSWORD = "A89YQasdfhq14s99"
-ENABLE_PASSWORD = "A89YQasdfhq14s99"
+PASSWORD = "senha"
+ENABLE_PASSWORD = "senha"
 TIMEOUT = 60
 
 # Argumento: aplicar ou somente exibir
@@ -17,6 +17,7 @@ MODO_APLICAR = len(sys.argv) > 1 and sys.argv[1] == "--aplicar"
 # Comandos
 CMD_ENTER_ONU = "cd onu"
 CMD_LIST_ONU = "show authorization slot 4 p 3"
+CMD_LIST_CONFIG_WAN = "show startup-config module onu_wan"
 CMD_WAN_CFG = (
     "set wancfg sl {slot} {pon} {onu} ind 1 mode inter ty r 3800 0 nat en qos dis dsp pppoe pro dis "
     "emr_aroeiras_fib@tubaron.net key:khl1k+3& null auto entries 6 fe1 fe2 fe3 fe4 ssid1 ssid5"
@@ -107,9 +108,21 @@ def listar_onus(session):
     print(f"\n📊 Total ONUs compatíveis: {len(onus_compat)}")
     return onus_compat
 
+def listar_wan_cfg(session):
+    send_command(session, "cd ..", force=True)
+    session.expect(r"#")
+    print(session)
+    # send_command(session, CMD_LIST_CONFIG_WAN, force=True)
+    # session.expect(r"#")
+    # output = get_full_output(session)
+    # print("\n📋 Saída completa do comando WAN CFG:\n")
+    # print(output)
+    # return output
+    
+
 # --------------------------------------------------------------------
 def mostrar_tr069_e_wan(session, onus):
-    print(onus)
+    # print(onus)
     # print("\n🔍 Exibindo TR-069 e WAN CFG (modo teste)...\n")
     for slot, pon, onu, onutype in onus:
         print(CMD_TR069.format(slot=slot, pon=pon, onu=onu))
@@ -119,9 +132,13 @@ def mostrar_tr069_e_wan(session, onus):
     #     print("[WAN CFG] PPPoE usuário: cliente123 senha: ****")
     #     time.sleep(0.5)
 
+    print(CMD_WAN_CFG.format(slot=slot, pon=pon, onu=onu))
+    print(CMD_LIST_CONFIG_WAN)
+
 # --------------------------------------------------------------------
 if __name__ == "__main__":
     session = conectar(HOST, USER, PASSWORD, ENABLE_PASSWORD)
     onus_compat = listar_onus(session)
     # mostrar_tr069_e_wan(session, onus_compat)
+    listar_wan_cfg(session)
     print("\n✅ Script finalizado!")
