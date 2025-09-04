@@ -3,12 +3,17 @@ import pexpect
 import sys
 import re
 import time
+from dotenv import load_dotenv
+import os
+
+
+load_dotenv()
 
 # Configurações
-HOST = "host"
-USER = "GEPON"
-PASSWORD = "senha"
-ENABLE_PASSWORD = "senha"
+HOST = os.getenv("DEVICE_HOST")
+USER = os.getenv("DEVICE_USER")
+PASSWORD = os.getenv("DEVICE_PASSWORD")
+ENABLE_PASSWORD = os.getenv("DEVICE_PASSWORD")
 TIMEOUT = 60
 
 # Argumento: aplicar ou somente exibir
@@ -88,7 +93,7 @@ def send_command(session, command, force=False):
 def listar_onus(session):
     send_command(session, CMD_ENTER_ONU, force=True)
     session.expect(r"onu#")
-
+    
     send_command(session, CMD_LIST_ONU)
     output = get_full_output(session)
 
@@ -108,17 +113,58 @@ def listar_onus(session):
     print(f"\n📊 Total ONUs compatíveis: {len(onus_compat)}")
     return onus_compat
 
-def listar_wan_cfg(session):
+import re
+
+import re
+
+def listar_wan_cfg(session, onus_compat, timeout=60):
+    """
+    Lista a configuração WAN apenas das ONUs compatíveis.
+    onus_compat: lista de tuplas (slot, pon, onu, onutype)
+    """
     send_command(session, "cd ..", force=True)
-    session.expect(r"#")
-    print(session)
-    # send_command(session, CMD_LIST_CONFIG_WAN, force=True)
-    # session.expect(r"#")
-    # output = get_full_output(session)
-    # print("\n📋 Saída completa do comando WAN CFG:\n")
-    # print(output)
-    # return output
+    send_command(session, CMD_LIST_CONFIG_WAN, force=True)
     
+    output = ""
+    while True:
+        try:
+            chunk = session.read_nonblocking(size=4096, timeout=1)
+        except Exception:
+            chunk = b""
+        
+        if not chunk:
+            continue
+        
+        if isinstance(chunk, bytes):
+            chunk = chunk.decode(errors="ignore")
+        
+        output += chunk.replace("\x00", "")
+        
+        # paginação
+        if "--Press any key to continue" in chunk:
+            session.send(" ")  # envia espaço para continuar
+        
+        # prompt final
+        if re.search(r"#\s*$", chunk):
+            break
+
+    # Limpa linhas vazias e espaços extras
+    output = "\n".join([line.strip() for line in output.splitlines() if line.strip()])
+    
+    # Extrai só as linhas compatíveis
+    filtered_lines = []
+    for line in output.splitlines():
+        match = re.search(r"set wancfg sl (\d+) (\d+) (\d+) ", line)
+        if match:
+            slot, pon, onu = match.groups()
+            if (slot, pon, onu, None) in [(s, p, o, None) for s, p, o, t in onus_compat]:
+                filtered_lines.append(line)
+    
+    print("\n📋 Config WAN das ONUs compatíveis:\n")
+    for l in filtered_lines:
+        print(l)
+    
+    return filtered_lines
 
 # --------------------------------------------------------------------
 def mostrar_tr069_e_wan(session, onus):
@@ -133,7 +179,7 @@ def mostrar_tr069_e_wan(session, onus):
     #     time.sleep(0.5)
 
     print(CMD_WAN_CFG.format(slot=slot, pon=pon, onu=onu))
-    print(CMD_LIST_CONFIG_WAN)
+    # print(CMD_LIST_CONFIG_WAN)
 
 # --------------------------------------------------------------------
 if __name__ == "__main__":
