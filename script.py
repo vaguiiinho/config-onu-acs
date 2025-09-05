@@ -25,10 +25,10 @@ MODO_APLICAR = len(sys.argv) > 1 and sys.argv[1] == "--aplicar"
 CMD_ENTER_ONU = "cd onu"
 CMD_LIST_ONU = "show authorization slot 4 p 3"
 CMD_LIST_CONFIG_WAN = "show startup-config module onu_wan"
-CMD_WAN_CFG = (
-    "set wancfg sl {slot} {pon} {onu} ind 1 mode inter ty r 3800 0 nat en qos dis dsp pppoe pro dis "
-    "emr_aroeiras_fib@tubaron.net key:khl1k+3& null auto entries 6 fe1 fe2 fe3 fe4 ssid1 ssid5"
-)
+# CMD_WAN_CFG = (
+#     "set wancfg sl {slot} {pon} {onu} ind 1 mode tr069_internet ty r 3800 0 nat en qos dis dsp pppoe pro dis "
+#     "emr_aroeiras_fib@tubaron.net key:khl1k+3& null auto entries 6 fe1 fe2 fe3 fe4 ssid1 ssid5"
+# )
 
 CMD_TR069 = (
     "set remote_manage_cfg slot {slot} pon {pon} onu {onu} tr069 enable "
@@ -102,8 +102,8 @@ def listar_onus(session):
     send_command(session, CMD_LIST_ONU)
     output = get_full_output(session)
 
-    print("\n📋 Saída completa do comando:\n")
-    print(output)
+    # print("\n📋 Saída completa do comando:\n")
+    # print(output)
 
     # Filtrar ONUs compatíveis
     onus_compat = []
@@ -113,9 +113,9 @@ def listar_onus(session):
             slot, pon, onu, onutype = match.groups()
             if onutype in COMPATIBLE_ONUS:
                 onus_compat.append((slot, pon, onu, onutype))
-                print(f"✅ Compatível: Slot {slot}, PON {pon}, ONU {onu}, Tipo {onutype}")
+                # print(f"✅ Compatível: Slot {slot}, PON {pon}, ONU {onu}, Tipo {onutype}")
 
-    print(f"\n📊 Total ONUs compatíveis: {len(onus_compat)}")
+    # print(f"\n📊 Total ONUs compatíveis: {len(onus_compat)}")
     return onus_compat
 
 def listar_wan_cfg(session, onus_compat, timeout=60):
@@ -168,15 +168,21 @@ def listar_wan_cfg(session, onus_compat, timeout=60):
 
 def _extrair_login_e_chave(linha):
     """
-    Extrai login PPPoE (email) e chave atual (após 'key:') de uma linha wancfg.
-    Retorna (login, chave) ou (None, None) se não encontrar.
+    Extrai o modo (após 'mode'), o login PPPoE (email) e a chave atual (após 'key:')
+    de uma linha wancfg em UMA única regex.
+
+    Retorna (mode, login, chave) ou (None, None, None) se não encontrar.
     """
-    # Exemplo alvo:
-    # set wancfg sl 4 3 5 ... pppoe ... joslainenoronha@tubaron.net key:f6&ii7*e null ...
-    match = re.search(r"pppoe\s+pro\s+(?:en|dis)\s+([^\s]+)\s+key:([^\s]+)", linha)
+    pattern_unico = (
+        r"\bmode\s+(\S+).*?"          # captura o modo após 'mode'
+        r"pppoe\s+pro\s+(?:en|dis)\b"  # estado do PPPoE (en/dis)
+        r".*?(\S+)\s+"                 # tolera texto de paginação e captura o login
+        r"key:(\S+)"                    # captura a chave após 'key:'
+    )
+    match = re.search(pattern_unico, linha)
     if not match:
-        return None, None
-    return match.group(1), match.group(2)
+        return None, None, None
+    return match.group(1), match.group(2), match.group(3)
 
 
 def _buscar_senha_ixc(login):
@@ -226,11 +232,12 @@ def _atualizar_wan_com_senha(linhas):
     resultado = []
     for linha in linhas:
         if "pppoe" in linha and "key:" in linha:
-            login, chave = _extrair_login_e_chave(linha)
+            mode, login, chave = _extrair_login_e_chave(linha)
+            if mode == "inter":
+                linha = re.sub(r"\bmode\s+[^\s]+", "mode tr069_internet", linha)
             if login:
                 senha = _buscar_senha_ixc(login)
                 if senha:
-                    # Substitui 'key:<chave>' por 'senha' (sem o prefixo 'key:') conforme exemplo
                     linha = re.sub(r"\bkey:[^\s]+", senha, linha)
         resultado.append(linha)
     return resultado
@@ -238,26 +245,24 @@ def _atualizar_wan_com_senha(linhas):
 
 # --------------------------------------------------------------------
 def mostrar_tr069_e_wan(session, onus):
-    # print(onus)
-    # print("\n🔍 Exibindo TR-069 e WAN CFG (modo teste)...\n")
     for slot, pon, onu, onutype in onus:
         print(CMD_TR069.format(slot=slot, pon=pon, onu=onu))
-    #     print(f"\n=== ONU {onu} ({onutype}) ===")
-    #     print(f"[Simulação] Executando: {CMD_WAN_CFG} para Slot {slot}, PON {pon}")
-    #     print("[TR069] http://acs.exemplo.com:7547")
-    #     print("[WAN CFG] PPPoE usuário: cliente123 senha: ****")
-    #     time.sleep(0.5)
+    print(listar_wan_cfg(session, onus))   
 
-    print(CMD_WAN_CFG.format(slot=slot, pon=pon, onu=onu))
-    # print(CMD_LIST_CONFIG_WAN)
+# --------------------------------------------------------------------
+def aplicar_tr069_e_wan(session, onus):
+    for slot, pon, onu, onutype in onus:
+        print(CMD_TR069.format(slot=slot, pon=pon, onu=onu)) 
+    print(listar_wan_cfg(session, onus))   
+
+
 
 # --------------------------------------------------------------------
 if __name__ == "__main__":
     session = conectar(HOST, USER, PASSWORD, ENABLE_PASSWORD)
     onus_compat = listar_onus(session)
-    mostrar_tr069_e_wan(session, onus_compat)
-    wans = listar_wan_cfg(session, onus_compat)
-    print(wans)
+    # mostrar_tr069_e_wan(session, onus_compat)
+    aplicar_tr069_e_wan(session, onus_compat)
     print("\n✅ Script finalizado!")
 
 
