@@ -23,7 +23,7 @@ MODO_APLICAR = len(sys.argv) > 1 and sys.argv[1] == "--aplicar"
 
 # Comandos
 CMD_ENTER_ONU = "cd onu"
-CMD_LIST_ONU = "show authorization slot 4 p 3"
+CMD_LIST_ONU = "show authorization slot 2 p 2"
 CMD_LIST_CONFIG_WAN = "show startup-config module onu_wan"
 # CMD_WAN_CFG = (
 #     "set wancfg sl {slot} {pon} {onu} ind 1 mode tr069_internet ty r 3800 0 nat en qos dis dsp pppoe pro dis "
@@ -251,12 +251,16 @@ def _atualizar_wan_com_senha(session, linhas):
 
 # --------------------------------------------------------------------
 def mostrar_tr069_e_wan(session, onus):
-    for slot, pon, onu, onutype in onus:
-        print(CMD_TR069.format(slot=slot, pon=pon, onu=onu))
+    # for slot, pon, onu, onutype in onus:
+        # print(CMD_TR069.format(slot=slot, pon=pon, onu=onu))
     print(listar_wan_cfg(session, onus))   
 
 # --------------------------------------------------------------------
 def aplicar_tr069_e_wan(session, onus):
+
+    for slot, pon, onu, onutype in onus:
+       tr069 = CMD_TR069.format(slot=slot, pon=pon, onu=onu)
+       send_command(session, tr069, force=True)
     # Em modo aplicar, gerar saída no formato solicitado:
     # 1) Cabeçalho "cd /onu/lan"
     # 2) Para cada ONU: linhas "set wancfg sl <slot> <pon> <onu> ..." (apenas ind 1),
