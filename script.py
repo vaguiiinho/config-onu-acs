@@ -23,7 +23,7 @@ MODO_APLICAR = len(sys.argv) > 1 and sys.argv[1] == "--aplicar"
 
 # Comandos
 CMD_ENTER_ONU = "cd onu"
-CMD_LIST_ONU = "show authorization slot 2 p 2"
+CMD_LIST_ONU = "show authorization slot 2 p 1"
 CMD_LIST_CONFIG_WAN = "show startup-config module onu_wan"
 # CMD_WAN_CFG = (
 #     "set wancfg sl {slot} {pon} {onu} ind 1 mode tr069_internet ty r 3800 0 nat en qos dis dsp pppoe pro dis "
@@ -119,57 +119,85 @@ def listar_onus(session):
     return onus_compat
 
 def listar_wan_cfg(session, onus_compat, timeout=60):
-    send_command(session, "cd ..", force=True)
-    send_command(session, CMD_LIST_CONFIG_WAN, force=True)
+    session.expect(r"#")
+    send_command(session, "cd ..")
+    session.expect(r"#")
+    send_command(session, CMD_LIST_CONFIG_WAN)
+    session.expect(r"--Press any key to continue|Ctrl\+c to stop")
     
+    stop_patterns = [r"Command execute success\.", r"[>#]"]
+    more_pattern=r"--Press any key to continue|Ctrl\+c to stop"
     output = ""
     
     while True:
         try:
-            # lê até 4096 bytes do buffer
-            chunk = session.read_nonblocking(size=4096, timeout=1)
+            chunk = session.before
         except Exception:
             chunk = b""
         
         if not chunk:
             continue
-        
-        # Converte bytes para string
-        if isinstance(chunk, bytes):
-            chunk = chunk.decode(errors="ignore")
+       
+        index = session.expect([more_pattern] + stop_patterns, timeout=timeout)    
         
         output += chunk.replace("\x00", "")
-        
-        # Detecta paginação e envia espaço
-        if "--Press any key to continue" in chunk:
-            session.send(" ")  # envia espaço para avançar página
-        
-        # Detecta prompt final da OLT
-        if re.search(r"#\s*$", chunk):
+        if index == 0:
+            session.send(" ")
+            continue
+        else:
             break
-
-    
-    # Limpa linhas vazias e espaços extras
+    # # Limpa linhas vazias e espaços extras
     lines = [line.strip() for line in output.splitlines() if line.strip()]
 
-    # Monta chaves de filtro para cada ONU compatível
+    # # Monta chaves de filtro para cada ONU compatível
     wanted_keys = {
         f"set wancfg sl {slot} {pon} {onu}" for (slot, pon, onu, _onutype) in onus_compat
     }
 
-    # Mantém apenas linhas referentes às ONUs compatíveis
+    # # Mantém apenas linhas referentes às ONUs compatíveis
     filtered_lines = [line for line in lines if any(key in line for key in wanted_keys)]
+    
+    
+
+    # Aplica limpeza em todas as linhas filtradas
+    linhas_limpas = []
+    for linha in filtered_lines:
+        limpa = limpar_saida(linha)
+        if limpa:  # Só adiciona se não estiver vazia após limpeza
+            linhas_limpas.append(limpa)
     # Atualiza as linhas de PPPoE substituindo a chave por senha da API
-    updated_lines = _atualizar_wan_com_senha(session, filtered_lines)
-    # Remove duplicadas preservando a ordem
-    seen = set()
-    unique_lines = []
-    for ln in updated_lines:
-        if ln not in seen:
-            unique_lines.append(ln)
-            seen.add(ln)
-    updated_output = "\n".join(unique_lines)
-    return updated_output
+    updated_lines = _atualizar_wan_com_senha(session, linhas_limpas)
+    return updated_lines
+
+
+def limpar_saida(texto: str) -> str:
+    # Remove backspaces e o caractere anterior
+    texto = re.sub(r".\x08", "", texto)
+    texto = re.sub(r"\x08+", "", texto)
+
+    # Para cada linha, se tiver \r, mantém apenas o que vem depois
+    linhas = []
+    for linha in texto.splitlines():
+        if "\r" in linha:
+            linha = linha.split("\r")[-1]
+        
+        # Remove espaços extras no início e fim
+        linha = linha.strip()
+        
+        # Remove linhas que começam com comentários (--)
+        if linha.startswith('--'):
+            continue
+            
+        # Remove linhas vazias
+        if not linha:
+            continue
+            
+        linhas.append(linha)
+
+    # Remove espaços extras entre palavras (múltiplos espaços viram um só)
+    texto_limpo = "\n".join(re.sub(r'\s+', ' ', linha) for linha in linhas)
+
+    return texto_limpo
 
 
 def _extrair_login_e_chave(linha):
@@ -253,7 +281,7 @@ def _atualizar_wan_com_senha(session, linhas):
 def mostrar_tr069_e_wan(session, onus):
     # for slot, pon, onu, onutype in onus:
         # print(CMD_TR069.format(slot=slot, pon=pon, onu=onu))
-    print(listar_wan_cfg(session, onus))   
+    print(listar_wan_cfg(session, onus))
 
 # --------------------------------------------------------------------
 def aplicar_tr069_e_wan(session, onus):
