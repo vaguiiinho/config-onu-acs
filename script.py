@@ -23,7 +23,7 @@ MODO_APLICAR = len(sys.argv) > 1 and sys.argv[1] == "--aplicar"
 
 # Comandos
 CMD_ENTER_ONU = "cd onu"
-CMD_LIST_ONU = "show authorization slot 2 p 1"
+CMD_LIST_ONU = "show authorization slot 2 p 3"
 CMD_LIST_CONFIG_WAN = "show startup-config module onu_wan"
 # CMD_WAN_CFG = (
 #     "set wancfg sl {slot} {pon} {onu} ind 1 mode tr069_internet ty r 3800 0 nat en qos dis dsp pppoe pro dis "
@@ -149,6 +149,8 @@ def listar_wan_cfg(session, onus_compat, timeout=60):
     # # Limpa linhas vazias e espaços extras
     lines = [line.strip() for line in output.splitlines() if line.strip()]
 
+    
+
     # # Monta chaves de filtro para cada ONU compatível
     wanted_keys = {
         f"set wancfg sl {slot} {pon} {onu}" for (slot, pon, onu, _onutype) in onus_compat
@@ -157,6 +159,8 @@ def listar_wan_cfg(session, onus_compat, timeout=60):
     # # Mantém apenas linhas referentes às ONUs compatíveis
     filtered_lines = [line for line in lines if any(key in line for key in wanted_keys)]
     
+    for line in lines:
+        print(limpar_saida(line))
     
 
     # Aplica limpeza em todas as linhas filtradas
@@ -164,7 +168,8 @@ def listar_wan_cfg(session, onus_compat, timeout=60):
     for linha in filtered_lines:
         limpa = limpar_saida(linha)
         if limpa:  # Só adiciona se não estiver vazia após limpeza
-            linhas_limpas.append(limpa)
+            if "pppoe" in limpa and "--" not in limpa:
+                linhas_limpas.append(limpa)
     # Atualiza as linhas de PPPoE substituindo a chave por senha da API
     updated_lines = _atualizar_wan_com_senha(session, linhas_limpas)
     return updated_lines
@@ -279,9 +284,9 @@ def _atualizar_wan_com_senha(session, linhas):
 
 # --------------------------------------------------------------------
 def mostrar_tr069_e_wan(session, onus):
-    # for slot, pon, onu, onutype in onus:
-        # print(CMD_TR069.format(slot=slot, pon=pon, onu=onu))
-    print(listar_wan_cfg(session, onus))
+    for slot, pon, onu, onutype in onus:
+        print(CMD_TR069.format(slot=slot, pon=pon, onu=onu))
+    listar_wan_cfg(session, onus)
 
 # --------------------------------------------------------------------
 def aplicar_tr069_e_wan(session, onus):
@@ -289,46 +294,17 @@ def aplicar_tr069_e_wan(session, onus):
     for slot, pon, onu, onutype in onus:
        tr069 = CMD_TR069.format(slot=slot, pon=pon, onu=onu)
        send_command(session, tr069, force=True)
-    # Em modo aplicar, gerar saída no formato solicitado:
-    # 1) Cabeçalho "cd /onu/lan"
-    # 2) Para cada ONU: linhas "set wancfg sl <slot> <pon> <onu> ..." (apenas ind 1),
-    #    com a linha PPPoE primeiro e depois a linha de ip-stack-mode
-    # 3) "apply wancfg slot <slot> <pon> <onu>"
+   
     wans = listar_wan_cfg(session, onus)
-    linhas = [ln for ln in (wans.splitlines() if isinstance(wans, str) else wans) if ln and ln.strip()]
-    # Entrar no contexto correto para aplicar as configurações
     send_command(session, "cd /onu/lan", force=True)
 
-    # Ordena ONUs por slot, pon, onu numericamente para saída estável
-    def _as_ints(t):
-        s, p, o, tname = t
-        try:
-            return (int(s), int(p), int(o))
-        except Exception:
-            return (s, p, o)
+    for wan in wans:
+       send_command(session, wan)
 
-    apply_cmds = []
-
-    for slot, pon, onu, _onutype in sorted(onus, key=_as_ints):
-        chave = f"set wancfg sl {slot} {pon} {onu}"
-        grupo = [l for l in linhas if re.match(rf"^{re.escape(chave)}\b", l)]
-        # manter apenas ind 1
-        grupo = [l for l in grupo if re.search(r"\bind\s+1\b", l)]
-        # ordenar: PPPoE primeiro (contém ' mode '), depois ip-stack-mode
-        grupo.sort(key=lambda l: 1 if "ip-stack-mode" in l else 0)
-
-        for linha in grupo:
-            send_command(session, linha)
-
-        apply_cmds.append(f"apply wancfg slot {slot} {pon} {onu}")
-
-    # separador e depois todos os apply
-    if apply_cmds:
-        for cmd in apply_cmds:
-            send_command(session, cmd)
-
-
-
+    for slot, pon, onu, _onutype in onus:
+        cmd = f"apply wancfg slot {slot} {pon} {onu}"
+        send_command(session, cmd)
+    
 # --------------------------------------------------------------------
 if __name__ == "__main__":
     session = conectar(HOST, USER, PASSWORD, ENABLE_PASSWORD)
